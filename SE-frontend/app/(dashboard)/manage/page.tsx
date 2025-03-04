@@ -12,26 +12,26 @@ import "@fortawesome/fontawesome-free/css/all.css";
 import Pagination from "@/app/components/Pagination";
 
 const BillRecord = () => {
-  const [bills, setBills] = useState<any[]>([]); // Store the bills data
-  const [searchQuery, setSearchQuery] = useState(""); // Search query for filtering bills
-  const [page, setPage] = useState(1); // Current page for pagination
-  const [totalPage, setTotalPage] = useState(1); // Total pages for pagination
-  const [totalRows, setTotalRows] = useState(0); // Total rows for pagination
+  const [bills, setBills] = useState<any[]>([]); 
+  const [searchQuery, setSearchQuery] = useState(""); 
+  const [page, setPage] = useState(1); 
+  const [totalPage, setTotalPage] = useState(1); 
+  const [totalRows, setTotalRows] = useState(0); 
   const router = useRouter();
 
-  // Function to fetch data
+
   const fetchData = async () => {
     try {
-      const res = await axios.get(`${config.apiUrl}/api/bill/history`, {
+      const res = await axios.get(`${config.apiUrl}/bill/history`, {
         params: {
-          page, // Pass the current page number
-          searchQuery, // Pass the search query for filtering
+          page, 
+          searchQuery, 
         },
       });
 
-      setBills(res.data.bills); // Set the bills data
-      setTotalRows(res.data.totalRows); // Set total rows for pagination
-      setTotalPage(res.data.totalPage); // Set total pages for pagination
+      setBills(res.data.bills); 
+      setTotalRows(res.data.totalRows); 
+      setTotalPage(res.data.totalPage); 
     } catch (error: any) {
       Swal.fire({
         icon: "error",
@@ -41,12 +41,12 @@ const BillRecord = () => {
     }
   };
 
-  // Fetch data when page or search query changes
+
   useEffect(() => {
     fetchData();
   }, [page, searchQuery]);
 
-  // Define table columns
+
   const columns = [
     {
       header: "เลขที่บิล",

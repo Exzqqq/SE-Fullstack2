@@ -35,7 +35,7 @@ const ExpensePage = () => {
     try {
     
       const res = await axios.get(
-        `${config.apiUrl}/api/expense/${page}/${searchQuery}`
+        `${config.apiUrl}/expense/${page}/${searchQuery}`
       );
 
       if (res.data.success && Array.isArray(res.data.expenses)) {
@@ -97,8 +97,8 @@ const ExpensePage = () => {
 
       // Ensure the API endpoint starts with `/api`
       const response = id
-        ? await axios.put(`${config.apiUrl}/api/expense/update/${id}`, payload)
-        : await axios.post(`${config.apiUrl}/api/expense/create`, payload);
+        ? await axios.put(`${config.apiUrl}/expense/update/${id}`, payload)
+        : await axios.post(`${config.apiUrl}/expense/create`, payload);
 
       if (response.data.success) {
         Swal.fire({
@@ -136,7 +136,7 @@ const ExpensePage = () => {
 
       if (result.isConfirmed) {
         // Ensure API call is using `/api`
-        await axios.delete(`${config.apiUrl}/api/expense/remove/${id}`);
+        await axios.delete(`${config.apiUrl}/expense/remove/${id}`);
 
         Swal.fire({
           icon: "success",

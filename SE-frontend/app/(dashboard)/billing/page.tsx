@@ -25,7 +25,7 @@ const Page = () => {
     try {
       if (!stock_id) return 0;
       const response = await axios.get(
-        `${config.apiUrl}/api/stocks?stock_id=${stock_id}`
+        `${config.apiUrl}/stocks?stock_id=${stock_id}`
       );
 
       if (response.data && response.data.length > 0) {
@@ -60,7 +60,7 @@ const Page = () => {
 
   const fetchData = async () => {
     try {
-      const response = await axios.get(`${config.apiUrl}/api/bill/list`);
+      const response = await axios.get(`${config.apiUrl}/bill/list`);
       setSells(response.data);
 
       let total = 0;
@@ -82,55 +82,6 @@ const Page = () => {
     const discountedPrice = total - (total * discount) / 100;
     setFinalAmount(discountedPrice);
   };
-
-  // const handleSave = async () => {
-  //   try {
-  //     if (!code || quantity <= 0) {
-  //       Swal.fire({
-  //         icon: "error",
-  //         title: "ข้อมูลไม่ครบถ้วน",
-  //         text: "กรุณากรอกรหัสสินค้าและจำนวนให้ถูกต้อง",
-  //       });
-  //       return;
-  //     }
-
-  //     const totalPrice = productPrice * quantity;
-
-  //     setTotalAmount(totalPrice);
-
-  //     const payload = {
-  //       items: [
-  //         {
-  //           stock_id: code,
-  //           quantity: quantity,
-  //           price: totalPrice,
-  //           // customPrice: customPrice,
-  //           // service: service,
-  //         },
-  //       ],
-  //     };
-
-  //     await axios.post(`${config.apiUrl}/api/bill/create`, payload);
-  //     setCode("");
-  //     setQty(0);
-  //     setProductPrice(0);
-  //     fetchData();
-  //   } catch (error: any) {
-  //     if (error.response?.status === 400) {
-  //       Swal.fire({
-  //         icon: "error",
-  //         title: "ไม่พบรายการสินค้า",
-  //         text: "ไม่พบรายการสินค้า หรือไม่มีในสต็อก",
-  //       });
-  //     } else {
-  //       Swal.fire({
-  //         icon: "error",
-  //         title: "เกิดข้อผิดพลาด",
-  //         text: error.message,
-  //       });
-  //     }
-  //   }
-  // };
 
   const handleSave = async () => {
     try {
@@ -160,7 +111,7 @@ const Page = () => {
           ],
         };
 
-        await axios.post(`${config.apiUrl}/api/bill/create`, payload);
+        await axios.post(`${config.apiUrl}/bill/create`, payload);
         setCode("");
         setQty(0);
         setProductPrice(0);
@@ -193,7 +144,7 @@ const Page = () => {
           ],
         };
 
-        await axios.post(`${config.apiUrl}/api/bill/create`, payload);
+        await axios.post(`${config.apiUrl}/bill/create`, payload);
         setCode("");
         setQty(0);
         setProductPrice(0);
@@ -227,7 +178,7 @@ const Page = () => {
       });
 
       if (button.isConfirmed) {
-        await axios.delete(`${config.apiUrl}/api/bill/remove/${id}`);
+        await axios.delete(`${config.apiUrl}/bill/remove/${id}`);
         fetchData();
       }
     } catch (error: any) {
@@ -255,7 +206,7 @@ const Page = () => {
           discount: discount,
         };
 
-        await axios.post(`${config.apiUrl}/api/bill/confirm`, payload);
+        await axios.post(`${config.apiUrl}/bill/confirm`, payload);
         setSells([]);
         setDiscount(0);
       }

@@ -37,7 +37,7 @@ function PrintContent() {
 
   const fetchData = async (): Promise<void> => {
     try {
-      const res = await axios.get(`${config.apiUrl}/api/sell/info/${bill_id}`);
+      const res = await axios.get(`${config.apiUrl}/sell/info/${bill_id}`);
       setSell(res.data);
       setTotalAmount(res.data.total_amount);
       setDiscountedAmount(res.data.discount);
@@ -129,7 +129,7 @@ function PrintContent() {
   );
 }
 
-// Wrap in Suspense to prevent the error
+
 export default function PrintPage() {
   return (
     <Suspense fallback={<div>Loading...</div>}>
