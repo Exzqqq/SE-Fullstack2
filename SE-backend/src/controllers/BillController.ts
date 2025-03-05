@@ -1,90 +1,98 @@
 import { Request, Response } from "express";
-import pool from "../config/database";
+import { mainDb, drugDb } from "../config/database"; // Use two databases
 
+/**
+ * 📌 Create a Bill (Fetches stocks & drugs from `drugDb`, stores bills in `mainDb`)
+ */
 export const createBill = async (req: Request, res: Response) => {
-  const client = await pool.connect();
+  const mainClient = await mainDb.connect();
+  const drugClient = await drugDb.connect();
 
   try {
-    await client.query("BEGIN");
+    await mainClient.query("BEGIN");
 
     const { items } = req.body;
 
-    
     for (const item of items) {
       const { stock_id, quantity, price, customPrice, service } = item;
 
       let billItemPrice = price;
       let serviceName = service || null;
+      let drugName = null;
 
-      
       if (service) {
-        
-        billItemPrice = customPrice || price; 
+        billItemPrice = customPrice || price;
       } else {
-        
-        if (stock_id) {
-          const stockQuery = `
-            SELECT unit_price, amount FROM stocks WHERE stock_id = $1
-          `;
-          const stockResult = await client.query(stockQuery, [stock_id]);
-
-          if (stockResult.rows.length === 0) {
-            throw new Error(`Stock with id ${stock_id} not found`);
-          }
-
-          const { unit_price, amount } = stockResult.rows[0];
-
-          
-          if (amount < quantity) {
-            throw new Error(
-              `Insufficient stock for id ${stock_id}. Available: ${amount}`
-            );
-          }
-
-          billItemPrice = unit_price; 
-
-         
-          await client.query(
-            `UPDATE stocks SET amount = amount - $1 WHERE stock_id = $2`,
-            [quantity, stock_id]
-          );
-        } else {
+        if (!stock_id) {
           throw new Error("Product stock ID is required.");
         }
+
+        // Fetch stock details from `drugDb`
+        const stockQuery = `SELECT unit_price, amount, drug_id FROM stocks WHERE stock_id = $1`;
+        const stockResult = await drugClient.query(stockQuery, [stock_id]);
+
+        if (stockResult.rows.length === 0) {
+          throw new Error(`Stock with ID ${stock_id} not found`);
+        }
+
+        const { unit_price, amount, drug_id } = stockResult.rows[0];
+
+        if (amount < quantity) {
+          throw new Error(`Insufficient stock for ID ${stock_id}. Available: ${amount}`);
+        }
+
+        billItemPrice = unit_price;
+
+        // Fetch drug name from `drugDb`
+        const drugQuery = `SELECT name FROM drugs WHERE drug_id = $1`;
+        const drugResult = await drugClient.query(drugQuery, [drug_id]);
+
+        if (drugResult.rows.length === 0) {
+          throw new Error(`Drug with ID ${drug_id} not found`);
+        }
+
+        drugName = drugResult.rows[0].name;
+
+        // Deduct stock from `drugDb`
+        await drugClient.query(
+          `UPDATE stocks SET amount = amount - $1 WHERE stock_id = $2`,
+          [quantity, stock_id]
+        );
       }
 
-      await client.query(
-        `INSERT INTO bill_items (bill_id, stock_id, quantity, subtotal, service, custom_price)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+      // Insert bill item into `mainDb`
+      await mainClient.query(
+        `INSERT INTO bill_items (bill_id, stock_id, quantity, subtotal, service, custom_price, drug_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
-          null, 
-          service ? null : stock_id, 
+          null,
+          service ? null : stock_id,
           quantity,
           billItemPrice * quantity,
           serviceName,
           customPrice,
+          drugName,
         ]
       );
     }
 
-    await client.query("COMMIT");
+    await mainClient.query("COMMIT");
 
-    res.status(201).json({
-      message: "Bill items added successfully",
-    });
+    res.status(201).json({ message: "Bill items added successfully" });
   } catch (error: any) {
-    await client.query("ROLLBACK");
-    res.status(500).json({
-      error: "Failed to add bill items",
-      details: error.message,
-    });
+    await mainClient.query("ROLLBACK");
+    res.status(500).json({ error: "Failed to add bill items", details: error.message });
   } finally {
-    client.release();
+    mainClient.release();
+    drugClient.release();
   }
 };
 
+/**
+ * 📌 List All Pending Bills
+ */
 export const listBills = async (req: Request, res: Response): Promise<void> => {
-  const client = await pool.connect();
+  const client = await mainDb.connect();
 
   try {
     const result = await client.query(`
@@ -93,46 +101,28 @@ export const listBills = async (req: Request, res: Response): Promise<void> => {
         bi.stock_id,
         bi.quantity,
         bi.subtotal,
-        s.unit_price,
-        d.name AS drug_name,
         bi.service,
         bi.custom_price,
-        CASE 
-          WHEN bi.service IS NOT NULL THEN bi.service
-          ELSE d.name
-        END AS display_name
+        bi.drug_name
       FROM bill_items bi
-      LEFT JOIN stocks s ON bi.stock_id = s.stock_id
-      LEFT JOIN drugs d ON s.drug_id = d.drug_id
       WHERE bi.status = 'pending'
       ORDER BY bi.bill_item_id ASC
     `);
 
-  
-    const bills = result.rows.map((row) => {
-      return {
-        ...row,
-        drug_name: row.display_name, 
-      };
-    });
-
-    res.status(200).json(bills);
+    res.status(200).json(result.rows);
   } catch (error: any) {
-    console.error("Error fetching bill items:", error);
-    res.status(500).json({
-      error: "Failed to fetch bill items",
-      message: error.message,
-    });
+    res.status(500).json({ error: "Failed to fetch bill items", message: error.message });
   } finally {
     client.release();
   }
 };
 
-export const removeBillItem = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
-  const client = await pool.connect();
+/**
+ * 📌 Remove a Bill Item
+ */
+export const removeBillItem = async (req: Request, res: Response): Promise<void> => {
+  const client = await mainDb.connect();
+  const drugClient = await drugDb.connect();
   const billItemId = parseInt(req.params.id, 10);
 
   if (isNaN(billItemId)) {
@@ -143,6 +133,7 @@ export const removeBillItem = async (
   try {
     await client.query("BEGIN");
 
+    // Get bill item details
     const billItemResult = await client.query(
       "SELECT stock_id, quantity FROM bill_items WHERE bill_item_id = $1",
       [billItemId]
@@ -154,138 +145,80 @@ export const removeBillItem = async (
 
     const { stock_id, quantity } = billItemResult.rows[0];
 
-    await client.query("DELETE FROM bill_items WHERE bill_item_id = $1", [
-      billItemId,
-    ]);
+    await client.query("DELETE FROM bill_items WHERE bill_item_id = $1", [billItemId]);
 
-    await client.query(
-      "UPDATE stocks SET amount = amount + $1 WHERE stock_id = $2",
-      [quantity, stock_id]
-    );
+    if (stock_id) {
+      await drugClient.query(
+        "UPDATE stocks SET amount = amount + $1 WHERE stock_id = $2",
+        [quantity, stock_id]
+      );
+    }
 
     await client.query("COMMIT");
 
-    res
-      .status(200)
-      .json({ message: `Bill item ${billItemId} removed and stock updated` });
+    res.status(200).json({ message: `Bill item ${billItemId} removed and stock updated` });
   } catch (error: any) {
     await client.query("ROLLBACK");
-    console.error("Error removing bill item:", error);
-    res.status(500).json({
-      error: "Failed to remove bill item",
-      message: error.message,
-    });
+    res.status(500).json({ error: "Failed to remove bill item", message: error.message });
   } finally {
     client.release();
+    drugClient.release();
   }
 };
 
+/**
+ * 📌 Confirm a Bill
+ */
 export const confirm = async (req: Request, res: Response): Promise<void> => {
-  const client = await pool.connect();
+  const client = await mainDb.connect();
 
   try {
     await client.query("BEGIN");
 
-    const { final_amount, discount } = req.body;
+    const { discount } = req.body;
 
     const billItemsResult = await client.query(`
-      SELECT
-        bi.bill_item_id,
-        bi.stock_id,
-        bi.quantity,
-        bi.subtotal,
-        s.unit_price,
-        d.name AS drug_name,
-        bi.service,
-        bi.custom_price
+      SELECT bi.bill_item_id, bi.subtotal
       FROM bill_items bi
-      LEFT JOIN stocks s ON bi.stock_id = s.stock_id
-      LEFT JOIN drugs d ON s.drug_id = d.drug_id
       WHERE bi.status = 'pending'
-      ORDER BY bi.bill_item_id ASC
     `);
 
     if (billItemsResult.rows.length === 0) {
       throw new Error("No pending bill items found to confirm");
     }
 
-    const billItems = billItemsResult.rows;
-
-    const totalAmount = billItems.reduce(
+    const totalAmount = billItemsResult.rows.reduce(
       (sum, item) => sum + parseFloat(item.subtotal),
       0
     );
 
     const discountedAmount = totalAmount - (totalAmount * discount) / 100;
 
-    if (discountedAmount < 0) {
-      throw new Error("Discounted amount cannot be negative");
-    }
-
-    const currentDate = new Date();
-
     const billResult = await client.query(
       `INSERT INTO bills (total_amount, discount, created_at)
-       VALUES ($1, $2, $3) RETURNING bill_id`,
-      [discountedAmount, discount, currentDate]
+       VALUES ($1, $2, NOW()) RETURNING bill_id`,
+      [discountedAmount, discount]
     );
 
     const newBillId = billResult.rows[0].bill_id;
 
-    await client.query(
-      `UPDATE bill_items
-       SET bill_id = $1, status = 'confirmed'
-       WHERE status = 'pending'`,
-      [newBillId]
-    );
+    await client.query(`UPDATE bill_items SET bill_id = $1, status = 'confirmed' WHERE status = 'pending'`, [
+      newBillId,
+    ]);
 
     await client.query("COMMIT");
 
-    const completeBill = await client.query(
-      `SELECT
-        b.bill_id,
-        b.total_amount,
-        b.discount,
-        b.created_at,
-        json_agg(
-          json_build_object(
-            'bill_item_id', bi.bill_item_id,
-            'stock_id', bi.stock_id,
-            'quantity', bi.quantity,
-            'subtotal', bi.subtotal,
-            'unit_price', s.unit_price,
-            'drug_name', d.name,
-            'service', bi.service,
-            'custom_price', bi.custom_price
-          ) ORDER BY bi.bill_item_id ASC
-        ) AS items
-      FROM bills b
-      LEFT JOIN bill_items bi ON b.bill_id = bi.bill_id
-      LEFT JOIN stocks s ON bi.stock_id = s.stock_id
-      LEFT JOIN drugs d ON s.drug_id = d.drug_id
-      WHERE b.bill_id = $1
-      GROUP BY b.bill_id, b.total_amount, b.discount, b.created_at`,
-      [newBillId]
-    );
-
-    res.status(201).json({
-      message: "Bill confirmed successfully",
-      bill: completeBill.rows[0],
-    });
+    res.status(201).json({ message: "Bill confirmed successfully", bill_id: newBillId });
   } catch (error: any) {
     await client.query("ROLLBACK");
-    console.error("Error confirming bill:", error);
-    res.status(500).json({
-      error: "Failed to confirm bill",
-      message: error.message,
-    });
+    res.status(500).json({ error: "Failed to confirm bill", message: error.message });
   } finally {
     client.release();
   }
 };
 
 export const history = async (req: Request, res: Response) => {
-  const client = await pool.connect();
+  const client = await mainDb.connect();
   const { page = 1, searchQuery = "" } = req.query;
 
   const itemsPerPage = 10;
@@ -347,7 +280,7 @@ export const history = async (req: Request, res: Response) => {
 
 
 export const dashboard = async (req: Request, res: Response) => {
-  const client = await pool.connect();
+  const client = await mainDb.connect();
   const { year } = req.params;
 
   try {
@@ -452,7 +385,7 @@ export const getBillInfo = async (
   req: Request,
   res: Response
 ): Promise<void> => {
-  const client = await pool.connect();
+  const client = await mainDb.connect();
   const { bill_id } = req.params;
 
   // Validate bill_id (check if it's a valid integer)

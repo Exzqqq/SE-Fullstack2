@@ -1,8 +1,10 @@
 import { Request, Response } from "express";
-import pool from "../config/database";
+import { mainDb, drugDb } from "../config/database"; // Use two databases
+
+
 
 export const createExpense = async (req: Request, res: Response) => {
-  const client = await pool.connect();
+  const client = await mainDb.connect();
   try {
     await client.query("BEGIN");
 
@@ -67,7 +69,7 @@ export const createExpense = async (req: Request, res: Response) => {
 };
 
 export const getAllExpenses = async (req: Request, res: Response) => {
-  const client = await pool.connect();
+  const client = await mainDb.connect();
   try {
     const { page, day, month, year } = req.params;
     const pageNumber = parseInt(page, 10) || 1;
@@ -143,7 +145,7 @@ export const getAllExpenses = async (req: Request, res: Response) => {
 };
 
 export const updateExpense = async (req: Request, res: Response) => {
-  const client = await pool.connect();
+  const client = await mainDb.connect();
   const { id } = req.params;
   let { quantity, name, price, totalprice } = req.body;
 
@@ -186,7 +188,7 @@ export const updateExpense = async (req: Request, res: Response) => {
 
 // Delete an expense
 export const deleteExpense = async (req: Request, res: Response) => {
-  const client = await pool.connect();
+  const client = await mainDb.connect();
   const { id } = req.params; // Extract ID from URL
 
   try {
