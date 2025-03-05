@@ -154,10 +154,10 @@ export const getTopSellingStocks = async (
 
     const result = await client.query(query);
 
-    if (result.rows.length === 0) {
-      res.status(404).json({ error: "No top selling stocks found" });
-      return;
-    }
+    // if (result.rows.length === 0) {
+    //   res.status(404).json({ error: "No top selling stocks found" });
+    //   return;
+    // }
 
     // Return the top 5 selling stocks
     res.status(200).json(result.rows);
