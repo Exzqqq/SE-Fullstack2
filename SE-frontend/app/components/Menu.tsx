@@ -81,8 +81,8 @@ const menuItems = [
             />
           </svg>
         ),
-        label: "ออกจากระบบ",
-        href: "/logout",
+        label: "  กลับหน้าหลัก",
+        href: "https://clinic.se.cpe.eng.cmu.ac.th/",
       },
     ],
   },

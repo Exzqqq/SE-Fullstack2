@@ -39,7 +39,7 @@ const Page = () => {
   const fetchData = async () => {
     try {
       const res = await axios.get(
-        `${config.apiUrl}/api/bill/dashboard/${currentYear}`
+        `${config.apiUrl}/bill/dashboard/${currentYear}`
       );
       setTotalIncome(res.data.totalSales || 0);
       setTotalExpense(res.data.totalExpenses || 0);
@@ -51,7 +51,7 @@ const Page = () => {
       const fetchedMonthlyData = res.data.monthlyData || [];
       setMonthlyData(fetchedMonthlyData);
 
-      const top = await axios.get(`${config.apiUrl}/api/stocks/top-selling`);
+      const top = await axios.get(`${config.apiUrl}/stocks/top-selling`);
       setTopSell(top.data);
 
       // If there is no data, clear the chart
