@@ -35,7 +35,7 @@ const ExpensePage = () => {
     try {
     
       const res = await axios.get(
-        `${config.apiUrl}/expense/${page}/${searchQuery}`
+        `${config.apiUrl}/api/expense/${page}/${searchQuery}`
       );
 
       if (res.data.success && Array.isArray(res.data.expenses)) {

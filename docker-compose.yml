@@ -34,7 +34,7 @@ services:
     depends_on:
       - pos-backend
     environment:
-      - NEXT_PUBLIC_API_URL=http://10.10.182.148:5006/api
+      - NEXT_PUBLIC_API_URL=http://localhost:5006/api
     volumes:
       - ./SE-frontend:/app
       - /app/node_modules
