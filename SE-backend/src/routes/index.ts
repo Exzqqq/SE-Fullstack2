@@ -10,6 +10,9 @@ import {
   history,
   dashboard,
   getBillInfo,
+  getStockByDrugId,
+  getStockByStockId,
+  getTopSellingStocks,
 } from "../controllers/BillController";
 
 import {
@@ -31,6 +34,9 @@ router.post("/bill/confirm", confirm);
 router.get("/bill/history", history);
 router.get("/bill/dashboard/:year", dashboard);
 router.get("/sell/info/:bill_id", getBillInfo);
+router.get("/stocks/drug/:drug_id", getStockByDrugId);
+router.get("/stocks/drugs/:stock_id", getStockByStockId);
+router.get("/stocks/top-selling", getTopSellingStocks);
 
 /**
  * 📌 EXPENSE ROUTES

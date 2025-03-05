@@ -38,7 +38,9 @@ export const createBill = async (req: Request, res: Response) => {
         const { unit_price, amount, drug_id } = stockResult.rows[0];
 
         if (amount < quantity) {
-          throw new Error(`Insufficient stock for ID ${stock_id}. Available: ${amount}`);
+          throw new Error(
+            `Insufficient stock for ID ${stock_id}. Available: ${amount}`
+          );
         }
 
         billItemPrice = unit_price;
@@ -81,7 +83,9 @@ export const createBill = async (req: Request, res: Response) => {
     res.status(201).json({ message: "Bill items added successfully" });
   } catch (error: any) {
     await mainClient.query("ROLLBACK");
-    res.status(500).json({ error: "Failed to add bill items", details: error.message });
+    res
+      .status(500)
+      .json({ error: "Failed to add bill items", details: error.message });
   } finally {
     mainClient.release();
     drugClient.release();
@@ -111,7 +115,9 @@ export const listBills = async (req: Request, res: Response): Promise<void> => {
 
     res.status(200).json(result.rows);
   } catch (error: any) {
-    res.status(500).json({ error: "Failed to fetch bill items", message: error.message });
+    res
+      .status(500)
+      .json({ error: "Failed to fetch bill items", message: error.message });
   } finally {
     client.release();
   }
@@ -120,7 +126,10 @@ export const listBills = async (req: Request, res: Response): Promise<void> => {
 /**
  * 📌 Remove a Bill Item
  */
-export const removeBillItem = async (req: Request, res: Response): Promise<void> => {
+export const removeBillItem = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
   const client = await mainDb.connect();
   const drugClient = await drugDb.connect();
   const billItemId = parseInt(req.params.id, 10);
@@ -145,7 +154,9 @@ export const removeBillItem = async (req: Request, res: Response): Promise<void>
 
     const { stock_id, quantity } = billItemResult.rows[0];
 
-    await client.query("DELETE FROM bill_items WHERE bill_item_id = $1", [billItemId]);
+    await client.query("DELETE FROM bill_items WHERE bill_item_id = $1", [
+      billItemId,
+    ]);
 
     if (stock_id) {
       await drugClient.query(
@@ -156,10 +167,14 @@ export const removeBillItem = async (req: Request, res: Response): Promise<void>
 
     await client.query("COMMIT");
 
-    res.status(200).json({ message: `Bill item ${billItemId} removed and stock updated` });
+    res
+      .status(200)
+      .json({ message: `Bill item ${billItemId} removed and stock updated` });
   } catch (error: any) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: "Failed to remove bill item", message: error.message });
+    res
+      .status(500)
+      .json({ error: "Failed to remove bill item", message: error.message });
   } finally {
     client.release();
     drugClient.release();
@@ -202,16 +217,21 @@ export const confirm = async (req: Request, res: Response): Promise<void> => {
 
     const newBillId = billResult.rows[0].bill_id;
 
-    await client.query(`UPDATE bill_items SET bill_id = $1, status = 'confirmed' WHERE status = 'pending'`, [
-      newBillId,
-    ]);
+    await client.query(
+      `UPDATE bill_items SET bill_id = $1, status = 'confirmed' WHERE status = 'pending'`,
+      [newBillId]
+    );
 
     await client.query("COMMIT");
 
-    res.status(201).json({ message: "Bill confirmed successfully", bill_id: newBillId });
+    res
+      .status(201)
+      .json({ message: "Bill confirmed successfully", bill_id: newBillId });
   } catch (error: any) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: "Failed to confirm bill", message: error.message });
+    res
+      .status(500)
+      .json({ error: "Failed to confirm bill", message: error.message });
   } finally {
     client.release();
   }
@@ -278,7 +298,6 @@ export const history = async (req: Request, res: Response) => {
   }
 };
 
-
 export const dashboard = async (req: Request, res: Response) => {
   const client = await mainDb.connect();
   const { year } = req.params;
@@ -308,7 +327,6 @@ export const dashboard = async (req: Request, res: Response) => {
     `;
     const expensesResult = await client.query(expensesQuery, [year]);
 
-
     const monthlyData = dashboardResult.rows.map((row) => {
       const expenseData = expensesResult.rows.find(
         (expense) => expense.month === row.month
@@ -325,7 +343,6 @@ export const dashboard = async (req: Request, res: Response) => {
       0
     );
 
-  
     const totalExpenses = monthlyData.reduce(
       (total, data) => total + parseFloat(data.expense || "0"),
       0
@@ -357,7 +374,7 @@ export const dashboard = async (req: Request, res: Response) => {
       totalExpensesAllYearsResult.rows[0].total_expenses_all_years || 0;
     const netProfitAllYears = totalSalesAllYears - totalExpensesAllYears;
 
-    const finalMonthlyData = monthlyData; 
+    const finalMonthlyData = monthlyData;
 
     res.status(200).json({
       monthlyData: finalMonthlyData,
@@ -395,7 +412,6 @@ export const getBillInfo = async (
   }
 
   try {
-  
     const billQuery = `
       SELECT 
         b.bill_id, 
@@ -439,5 +455,98 @@ export const getBillInfo = async (
       .json({ error: "Failed to fetch bill info", message: error.message });
   } finally {
     client.release();
+  }
+};
+
+//for stock
+export const getTopSellingStocks = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const client = await drugDb.connect();
+
+  try {
+    const query = `
+      SELECT
+        s.stock_id,
+        d.name AS drug_name,
+        s.unit_price,
+        SUM(bi.quantity) AS total_quantity_sold
+      FROM
+        bill_items bi
+      JOIN stocks s ON bi.stock_id = s.stock_id
+      JOIN drugs d ON s.drug_id = d.drug_id
+      WHERE
+        bi.status = 'confirmed'
+      GROUP BY
+        s.stock_id, d.name, s.unit_price
+      ORDER BY
+        total_quantity_sold DESC
+      LIMIT 5;
+    `;
+
+    const result = await client.query(query);
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: "No top selling stocks found" });
+      return;
+    }
+
+    // Return the top 5 selling stocks
+    res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("Error fetching top selling stocks:", error);
+    res.status(500).json({ error: "Failed to fetch top selling stocks" });
+  } finally {
+    client.release();
+  }
+};
+
+export const getStockByStockId = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const { stock_id } = req.params; // Extract stock_id from request URL
+
+  try {
+    const result = await drugDb.query(
+      `SELECT s.stock_id, s.unit_price, s.amount, s.expired, 
+              d.name AS drug_name, d.drug_type, d.unit_type 
+       FROM stocks s
+       JOIN drugs d ON s.drug_id = d.drug_id
+       WHERE s.stock_id = $1`,
+      [stock_id]
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: "Stock not found" });
+    }
+
+    res.status(200).json(result.rows[0]); // Return stock info with drug name
+  } catch (error) {
+    console.error("Error fetching stock:", error);
+    res.status(500).json({ error: "Failed to fetch stock details" });
+  }
+};
+
+export const getStockByDrugId = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const { drug_id } = req.params; // Drug ID from URL
+
+  try {
+    const result = await drugDb.query("SELECT * FROM stocks WHERE drug_id = $1", [
+      drug_id,
+    ]);
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: "No stocks found for this drug" });
+    }
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error(error); // Debugging log
+    res.status(500).json({ error: "Failed to fetch stocks by drug ID" });
   }
 };
