@@ -11,81 +11,78 @@ export const createBill = async (req: Request, res: Response) => {
   try {
     await mainClient.query("BEGIN");
 
-    const { items } = req.body;
+    const { items, customer_name, discount } = req.body;
 
+    if (!items || items.length === 0) {
+      throw new Error("At least one bill item is required.");
+    }
+
+    // Step 1: Create Bill record first
+    const totalAmount = items.reduce((acc: number, item: any) => {
+      const itemPrice = item.customPrice || item.price;
+      return acc + itemPrice * item.quantity;
+    }, 0);
+
+    const billInsertResult = await mainClient.query(
+      `INSERT INTO bills (customer_name, discount, total_amount)
+       VALUES ($1, $2, $3) RETURNING bill_id`,
+      [customer_name || null, discount || 0, totalAmount]
+    );
+
+    const bill_id = billInsertResult.rows[0].bill_id;
+
+    // Step 2: Insert Bill Items
     for (const item of items) {
       const { stock_id, quantity, price, customPrice, service } = item;
 
       let billItemPrice = price;
       let serviceName = service || null;
-      let drugName = null;
 
-      if (service) {
-        billItemPrice = customPrice || price;
-      } else {
-        if (!stock_id) {
-          throw new Error("Product stock ID is required.");
-        }
+      if (!service) {
+        if (!stock_id) throw new Error("Stock ID is required for product items.");
 
-        // Fetch stock details from `drugDb`
-        const stockQuery = `SELECT unit_price, amount, drug_id FROM stocks WHERE stock_id = $1`;
-        const stockResult = await drugClient.query(stockQuery, [stock_id]);
+        const stockResult = await drugClient.query(
+          `SELECT unit_price, amount FROM stock WHERE stock_id = $1`,
+          [stock_id]
+        );
 
-        if (stockResult.rows.length === 0) {
-          throw new Error(`Stock with ID ${stock_id} not found`);
-        }
+        if (stockResult.rows.length === 0)
+          throw new Error(`Stock with ID ${stock_id} not found.`);
 
-        const { unit_price, amount, drug_id } = stockResult.rows[0];
+        const { unit_price, amount } = stockResult.rows[0];
 
-        if (amount < quantity) {
-          throw new Error(
-            `Insufficient stock for ID ${stock_id}. Available: ${amount}`
-          );
-        }
+        if (amount < quantity)
+          throw new Error(`Insufficient stock for stock ID ${stock_id}. Available: ${amount}`);
 
         billItemPrice = unit_price;
 
-        // Fetch drug name from `drugDb`
-        const drugQuery = `SELECT name FROM drugs WHERE drug_id = $1`;
-        const drugResult = await drugClient.query(drugQuery, [drug_id]);
-
-        if (drugResult.rows.length === 0) {
-          throw new Error(`Drug with ID ${drug_id} not found`);
-        }
-
-        drugName = drugResult.rows[0].name;
-
-        // Deduct stock from `drugDb`
         await drugClient.query(
-          `UPDATE stocks SET amount = amount - $1 WHERE stock_id = $2`,
+          `UPDATE stock SET amount = amount - $1 WHERE stock_id = $2`,
           [quantity, stock_id]
         );
       }
 
-      // Insert bill item into `mainDb`
       await mainClient.query(
-        `INSERT INTO bill_items (bill_id, stock_id, quantity, subtotal, service, custom_price, drug_name)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        `INSERT INTO bill_items (bill_id, stock_id, quantity, subtotal, service, custom_price)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [
-          null,
+          bill_id,
           service ? null : stock_id,
           quantity,
           billItemPrice * quantity,
           serviceName,
-          customPrice,
-          drugName,
+          customPrice || 0,
         ]
       );
     }
 
     await mainClient.query("COMMIT");
 
-    res.status(201).json({ message: "Bill items added successfully" });
+    res.status(201).json({ message: "Bill created successfully", bill_id });
   } catch (error: any) {
     await mainClient.query("ROLLBACK");
-    res
-      .status(500)
-      .json({ error: "Failed to add bill items", details: error.message });
+    console.error("Error creating bill:", error);
+    res.status(500).json({ error: error.message });
   } finally {
     mainClient.release();
     drugClient.release();
@@ -95,31 +92,65 @@ export const createBill = async (req: Request, res: Response) => {
 /**
  * 📌 List All Pending Bills
  */
-export const listBills = async (req: Request, res: Response): Promise<void> => {
-  const client = await mainDb.connect();
+export const listBills = async (req: Request, res: Response) => {
+  const mainClient = await mainDb.connect();
+  const drugClient = await drugDb.connect();
 
   try {
-    const result = await client.query(`
-      SELECT 
-        bi.bill_item_id,
-        bi.stock_id,
-        bi.quantity,
-        bi.subtotal,
-        bi.service,
-        bi.custom_price,
-        bi.drug_name
-      FROM bill_items bi
-      WHERE bi.status = 'pending'
-      ORDER BY bi.bill_item_id ASC
+    // Step 1: Fetch pending bill items from mainDb
+    const billItemsResult = await mainClient.query(`
+      SELECT
+        bill_item_id,
+        stock_id,
+        quantity,
+        subtotal,
+        service,
+        custom_price
+      FROM bill_items
+      WHERE status = 'pending'
+      ORDER BY bill_item_id ASC
     `);
 
-    res.status(200).json(result.rows);
+    const billItems = billItemsResult.rows;
+
+    // Extract unique stock_ids (excluding null values)
+    const stockIds = [...new Set(billItems.map(item => item.stock_id).filter(id => id))];
+
+    let stockDetailsMap = new Map();
+
+    if (stockIds.length > 0) {
+      // Step 2: Fetch corresponding stock and drug details from drugDb
+      const stockDetailsResult = await drugClient.query(`
+        SELECT s.stock_id, d.name AS drug_name, s.unit_price
+        FROM stock s
+        JOIN drug d ON s.drug_id = d.drug_id
+        WHERE s.stock_id = ANY($1)
+      `, [stockIds]);
+
+      stockDetailsResult.rows.forEach(item => {
+        stockDetailsMap.set(item.stock_id, item);
+      });
+    }
+
+    // Combine data clearly, including 'service'
+    const combinedBillItems = billItems.map(item => ({
+      bill_item_id: item.bill_item_id,
+      stock_id: item.stock_id,
+      quantity: item.quantity,
+      subtotal: item.subtotal,
+      service: item.service,
+      custom_price: item.custom_price,
+      drug_name: item.service ? item.service : stockDetailsMap.get(item.stock_id)?.drug_name || null,
+      unit_price: stockDetailsMap.get(item.stock_id)?.unit_price || null
+    }));
+
+    res.status(200).json(combinedBillItems);
   } catch (error: any) {
-    res
-      .status(500)
-      .json({ error: "Failed to fetch bill items", message: error.message });
+    console.error("Error fetching bill items:", error);
+    res.status(500).json({ error: "Failed to fetch bill items", message: error.message });
   } finally {
-    client.release();
+    mainClient.release();
+    drugClient.release();
   }
 };
 
@@ -160,7 +191,7 @@ export const removeBillItem = async (
 
     if (stock_id) {
       await drugClient.query(
-        "UPDATE stocks SET amount = amount + $1 WHERE stock_id = $2",
+        "UPDATE stock SET amount = amount + $1 WHERE stock_id = $2",
         [quantity, stock_id]
       );
     }
@@ -402,59 +433,94 @@ export const getBillInfo = async (
   req: Request,
   res: Response
 ): Promise<void> => {
-  const client = await mainDb.connect();
+  const mainClient = await mainDb.connect();
+  const drugClient = await drugDb.connect();
   const { bill_id } = req.params;
 
-  // Validate bill_id (check if it's a valid integer)
   if (!bill_id || isNaN(Number(bill_id))) {
     res.status(400).json({ error: "Invalid or missing bill_id" });
-    return; // Ensure no further code execution
+    return;
   }
 
   try {
-    const billQuery = `
+    // Step 1: Fetch bill and bill_items from mainDb
+    const billResult = await mainClient.query(
+      `
       SELECT 
         b.bill_id, 
         b.total_amount, 
         b.discount,
-        b.created_at, 
-        json_agg(
-          json_build_object(
-            'stock_id', bi.stock_id,      
-            'drug_name', 
-              CASE
-                WHEN bi.service IS NOT NULL THEN bi.service
-                ELSE d.name
-              END,
-            'quantity', bi.quantity,
-            'unit_price', s.unit_price,
-            'subtotal', bi.subtotal
-          ) ORDER BY bi.stock_id ASC    
-        ) AS treatments
+        b.created_at,
+        bi.bill_item_id,
+        bi.stock_id,
+        bi.quantity,
+        bi.subtotal,
+        bi.service,
+        bi.custom_price
       FROM bills b
       JOIN bill_items bi ON b.bill_id = bi.bill_id
-      LEFT JOIN stocks s ON bi.stock_id = s.stock_id
-      LEFT JOIN drugs d ON s.drug_id = d.drug_id
       WHERE b.bill_id = $1
-      GROUP BY b.bill_id, b.total_amount, b.created_at;
-    `;
-
-    const billResult = await client.query(billQuery, [bill_id]);
+      `,
+      [bill_id]
+    );
 
     if (billResult.rows.length === 0) {
       res.status(404).json({ error: "Bill not found" });
       return;
     }
 
-    const billData = billResult.rows[0];
+    const billItems = billResult.rows;
+
+    // Extract unique stock_ids (excluding nulls)
+    const stockIds = [
+      ...new Set(billItems.map((item) => item.stock_id).filter(Boolean)),
+    ];
+
+    let stockDetailsMap = new Map();
+
+    if (stockIds.length > 0) {
+      // Step 2: Fetch stock/drug details from drugDb
+      const stockDetailsResult = await drugClient.query(
+        `
+        SELECT s.stock_id, d.name AS drug_name, s.unit_price
+        FROM stock s
+        JOIN drug d ON s.drug_id = d.drug_id
+        WHERE s.stock_id = ANY($1)
+      `,
+        [stockIds]
+      );
+
+      stockDetailsResult.rows.forEach((item) => {
+        stockDetailsMap.set(item.stock_id, item);
+      });
+    }
+
+    // Merge bill items with stock/drug details
+    const treatments = billItems.map((item) => ({
+      stock_id: item.stock_id,
+      drug_name:
+        item.service || stockDetailsMap.get(item.stock_id)?.drug_name || "N/A",
+      quantity: item.quantity,
+      unit_price: stockDetailsMap.get(item.stock_id)?.unit_price || item.custom_price || null,
+      subtotal: item.subtotal,
+    }));
+
+    // Final structured response
+    const billData = {
+      bill_id: billResult.rows[0].bill_id,
+      total_amount: billResult.rows[0].total_amount,
+      discount: billResult.rows[0].discount,
+      created_at: billResult.rows[0].created_at,
+      treatments,
+    };
+
     res.status(200).json(billData);
   } catch (error: any) {
     console.error("Error fetching bill info:", error);
-    res
-      .status(500)
-      .json({ error: "Failed to fetch bill info", message: error.message });
+    res.status(500).json({ error: "Failed to fetch bill info", message: error.message });
   } finally {
-    client.release();
+    mainClient.release();
+    drugClient.release();
   }
 };
 
@@ -463,42 +529,59 @@ export const getTopSellingStocks = async (
   req: Request,
   res: Response
 ): Promise<void> => {
-  const client = await drugDb.connect();
+  const mainClient = await mainDb.connect();
+  const drugClient = await drugDb.connect();
 
   try {
-    const query = `
-      SELECT
-        s.stock_id,
-        d.name AS drug_name,
-        s.unit_price,
-        SUM(bi.quantity) AS total_quantity_sold
-      FROM
-        bill_items bi
-      JOIN stocks s ON bi.stock_id = s.stock_id
-      JOIN drugs d ON s.drug_id = d.drug_id
-      WHERE
-        bi.status = 'confirmed'
-      GROUP BY
-        s.stock_id, d.name, s.unit_price
-      ORDER BY
-        total_quantity_sold DESC
+    // Fetch top-selling stocks from mainDb
+    const topStocksQuery = `
+      SELECT stock_id, SUM(quantity) AS total_quantity_sold
+      FROM bill_items
+      WHERE status = 'confirmed'
+      GROUP BY stock_id
+      ORDER BY total_quantity_sold DESC
       LIMIT 5;
     `;
 
-    const result = await client.query(query);
+    const topSellingResult = await mainClient.query(topStocksQuery);
+    const stockIds = topSellingResult.rows.map(row => row.stock_id);
 
-    if (result.rows.length === 0) {
-      res.status(404).json({ error: "No top selling stocks found" });
+    if (stockIds.length === 0) {
+      res.status(404).json({ error: "No top selling stocks found." });
       return;
     }
 
-    // Return the top 5 selling stocks
-    res.status(200).json(result.rows);
+    // Fetch detailed stock info from drugDb
+    const stockDetailsQuery = `
+      SELECT
+        s.stock_id,
+        d.name AS drug_name,
+        s.unit_price
+      FROM stock s
+      JOIN drug d ON s.drug_id = d.drug_id
+      WHERE s.stock_id = ANY($1);
+    `;
+
+    const stockDetailsResult = await drugClient.query(stockDetailsQuery, [stockIds]);
+
+    // Merge the results based on stock_id
+    const mergedResults = topSellingResult.rows.map(stock => {
+      const details = stockDetailsResult.rows.find(d => d.stock_id === stock.stock_id);
+      return {
+        stock_id: stock.stock_id,
+        drug_name: details ? details.drug_name : "Unknown",
+        unit_price: details ? details.unit_price : null,
+        total_quantity_sold: Number(stock.total_quantity_sold),
+      };
+    });
+
+    res.status(200).json(mergedResults);
   } catch (error) {
     console.error("Error fetching top selling stocks:", error);
     res.status(500).json({ error: "Failed to fetch top selling stocks" });
   } finally {
-    client.release();
+    mainClient.release();
+    drugClient.release();
   }
 };
 
@@ -512,8 +595,8 @@ export const getStockByStockId = async (
     const result = await drugDb.query(
       `SELECT s.stock_id, s.unit_price, s.amount, s.expired, 
               d.name AS drug_name, d.drug_type, d.unit_type 
-       FROM stocks s
-       JOIN drugs d ON s.drug_id = d.drug_id
+       FROM stock s
+       JOIN drug d ON s.drug_id = d.drug_id
        WHERE s.stock_id = $1`,
       [stock_id]
     );
@@ -523,7 +606,7 @@ export const getStockByStockId = async (
     }
 
     res.status(200).json(result.rows[0]); // Return stock info with drug name
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error fetching stock:", error);
     res.status(500).json({ error: "Failed to fetch stock details" });
   }
@@ -536,7 +619,7 @@ export const getStockByDrugId = async (
   const { drug_id } = req.params; // Drug ID from URL
 
   try {
-    const result = await drugDb.query("SELECT * FROM stocks WHERE drug_id = $1", [
+    const result = await drugDb.query("SELECT * FROM stock WHERE drug_id = $1", [
       drug_id,
     ]);
 
@@ -545,7 +628,7 @@ export const getStockByDrugId = async (
     }
 
     res.json(result.rows);
-  } catch (error) {
+  }  catch (error: any)  {
     console.error(error); // Debugging log
     res.status(500).json({ error: "Failed to fetch stocks by drug ID" });
   }
