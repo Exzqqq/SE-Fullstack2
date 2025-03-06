@@ -6,16 +6,19 @@ import { useSearchParams } from "next/navigation";
 import axios from "axios";
 
 interface Treatment {
-  stock_id: string | null;
+  stock_id: string | null; // can be null for services
   drug_name: string;
   quantity: number;
-  unit_price: number | null;
+  unit_price: number | null; // can be null for services
   subtotal: number;
-  service?: string | null;
-  custom_price?: number | null;
+  service?: string | null; // Optional service name
+  custom_price?: number | null; // Optional custom price for services
 }
 
 interface SellData {
+  bill_id: string;
+  total_amount: number;
+  created_at?: string;
   treatments: Treatment[];
 }
 
@@ -64,7 +67,7 @@ function PrintContent() {
         <div className="text-center font-bold text-2xl">ใบเสร็จรับเงิน (Receipt)</div>
         <div className="flex justify-between items-center">
           <div>ที่อยู่ (Address) : มงคงคีรี คลินิกการแพทย์ไทยประยุกต์</div>
-          <div>วันที่ (Date): {dayjs(sell.created_at).format("DD/MM/YYYY")}</div>
+          <div>วันที่ (Date): {dayjs(sell?.created_at).format("DD/MM/YYYY")}</div>
         </div>
         <table className="w-full border-collapse mt-4 border border-black">
           <thead>
